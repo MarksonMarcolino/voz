@@ -18,6 +18,7 @@ wheels/
 
 # Model checkpoints (large files)
 checkpoints_v2/
+piper-voices/
 
 # CORAA cache (large downloads)
 .coraa_cache/
