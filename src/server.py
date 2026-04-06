@@ -4,10 +4,12 @@ import asyncio
 import base64
 import logging
 import time
+from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from src.config import ACCENTS, KOKORO_LANG_CODES, KOKORO_SAMPLE_RATE, KOKORO_VOICES
@@ -19,6 +21,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TTS PoC", description="Chatterbox + OpenVoice V2 regional accent TTS")
+
+STATIC_DIR = Path(__file__).parent.parent / "static"
 
 pipeline: TTSPipeline | None = None
 kokoro_engine: KokoroEngine | None = None
@@ -46,6 +50,12 @@ class SynthesizeRequest(BaseModel):
 
 
 # --- REST endpoints (Chatterbox) ---
+
+
+@app.get("/")
+def chat_ui():
+    """Serve the chat interface."""
+    return HTMLResponse((STATIC_DIR / "chat.html").read_text())
 
 
 @app.get("/health")

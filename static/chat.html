@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sofia — Voice Chat</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #222;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header .status {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: #1a1a1a;
+    color: #666;
+  }
+  header .status.connected { background: #0a2a0a; color: #4ade80; }
+  .settings {
+    padding: 8px 20px;
+    border-bottom: 1px solid #222;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 13px;
+  }
+  .settings select {
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+  .settings label { color: #888; }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .msg {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: #1d4ed8;
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: #1a1a1a;
+    border-bottom-left-radius: 4px;
+  }
+  .msg.assistant .text { margin-bottom: 6px; }
+  .msg.assistant .meta {
+    font-size: 11px;
+    color: #666;
+  }
+  .msg.system {
+    align-self: center;
+    color: #666;
+    font-size: 12px;
+    font-style: italic;
+  }
+  .msg.assistant.streaming { border-left: 2px solid #4ade80; }
+  #input-area {
+    padding: 12px 20px;
+    border-top: 1px solid #222;
+    display: flex;
+    gap: 8px;
+  }
+  #text-input {
+    flex: 1;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: #e0e0e0;
+    font-size: 14px;
+    outline: none;
+  }
+  #text-input:focus { border-color: #1d4ed8; }
+  #text-input:disabled { opacity: 0.5; }
+  #send-btn {
+    background: #1d4ed8;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  #send-btn:hover { background: #2563eb; }
+  #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Sofia</h1>
+  <span class="status" id="status">Disconnected</span>
+</header>
+
+<div class="settings">
+  <label>Language:</label>
+  <select id="lang">
+    <option value="pt">Portugues (BR)</option>
+    <option value="es">Espanol</option>
+  </select>
+  <label>Voice:</label>
+  <select id="voice">
+    <option value="">Default (female)</option>
+    <option value="pf_dora">pf_dora (PT female)</option>
+    <option value="pm_alex">pm_alex (PT male)</option>
+    <option value="ef_dora">ef_dora (ES female)</option>
+    <option value="em_alex">em_alex (ES male)</option>
+  </select>
+</div>
+
+<div id="messages">
+  <div class="msg system">Type a message to start chatting with Sofia.</div>
+</div>
+
+<div id="input-area">
+  <input type="text" id="text-input" placeholder="Type a message..." autofocus>
+  <button id="send-btn">Send</button>
+</div>
+
+<script>
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('text-input');
+const sendBtn = document.getElementById('send-btn');
+const statusEl = document.getElementById('status');
+const langEl = document.getElementById('lang');
+const voiceEl = document.getElementById('voice');
+
+let ws = null;
+let audioCtx = null;
+let nextPlayTime = 0;
+let currentMsgEl = null;
+let sampleRate = 24000;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/conversation`);
+
+  ws.onopen = () => {
+    statusEl.textContent = 'Connected';
+    statusEl.classList.add('connected');
+    inputEl.disabled = false;
+    sendBtn.disabled = false;
+  };
+
+  ws.onclose = () => {
+    statusEl.textContent = 'Disconnected';
+    statusEl.classList.remove('connected');
+    inputEl.disabled = true;
+    sendBtn.disabled = true;
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    addSystemMsg('Connection error. Retrying...');
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    handleMessage(msg);
+  };
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'metadata':
+      sampleRate = msg.sample_rate || 24000;
+      // Reset audio context for new response
+      if (audioCtx) audioCtx.close();
+      audioCtx = new AudioContext({ sampleRate });
+      nextPlayTime = 0;
+      break;
+
+    case 'transcript':
+      if (!currentMsgEl) {
+        currentMsgEl = addAssistantMsg('');
+      }
+      const textEl = currentMsgEl.querySelector('.text');
+      textEl.textContent += (textEl.textContent ? ' ' : '') + msg.text;
+      currentMsgEl.classList.add('streaming');
+      scrollToBottom();
+      break;
+
+    case 'audio':
+      playAudioChunk(msg.data);
+      break;
+
+    case 'done':
+      if (currentMsgEl) {
+        currentMsgEl.classList.remove('streaming');
+        const meta = currentMsgEl.querySelector('.meta');
+        meta.textContent = `${msg.total_duration_s}s audio | ${msg.generation_time_s}s generation | ${msg.total_chunks} chunks`;
+      }
+      currentMsgEl = null;
+      inputEl.disabled = false;
+      sendBtn.disabled = false;
+      inputEl.focus();
+      break;
+
+    case 'error':
+      addSystemMsg(`Error: ${msg.detail}`);
+      inputEl.disabled = false;
+      sendBtn.disabled = false;
+      currentMsgEl = null;
+      break;
+  }
+}
+
+function playAudioChunk(base64Data) {
+  if (!audioCtx) return;
+  const bytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+  const int16 = new Int16Array(bytes.buffer);
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    float32[i] = int16[i] / 32768;
+  }
+  const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
+  buffer.getChannelData(0).set(float32);
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+  const startAt = Math.max(nextPlayTime, audioCtx.currentTime + 0.02);
+  source.start(startAt);
+  nextPlayTime = startAt + buffer.duration;
+}
+
+function send() {
+  const text = inputEl.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  addUserMsg(text);
+  inputEl.value = '';
+  inputEl.disabled = true;
+  sendBtn.disabled = true;
+
+  ws.send(JSON.stringify({
+    type: 'conversation',
+    text: text,
+    language: langEl.value,
+    voice: voiceEl.value || undefined,
+  }));
+}
+
+function addUserMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg user';
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  scrollToBottom();
+}
+
+function addAssistantMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg assistant';
+  el.innerHTML = '<div class="text"></div><div class="meta"></div>';
+  el.querySelector('.text').textContent = text;
+  messagesEl.appendChild(el);
+  scrollToBottom();
+  return el;
+}
+
+function addSystemMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg system';
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') send();
+});
+sendBtn.addEventListener('click', send);
+
+connect();
+</script>
+</body>
+</html>
