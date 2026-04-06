@@ -52,6 +52,15 @@ TEST_PHRASES = {
 }
 
 
+# Kokoro TTS engine config (fast, streaming-capable)
+KOKORO_VOICES = {
+    "pt": {"female": "pf_dora", "male": "pm_alex"},
+    "es": {"female": "ef_dora", "male": "em_alex"},
+}
+KOKORO_LANG_CODES = {"pt": "p", "es": "e"}
+KOKORO_SAMPLE_RATE = 24000
+
+
 def get_reference_path(accent_id: str) -> Path:
     accent = ACCENTS.get(accent_id)
     if not accent:

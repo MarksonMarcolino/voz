@@ -16,6 +16,7 @@ dependencies = [
     "datasets>=4.8.3",
     "resemble-perth>=1.0.1",
     "setuptools>=82.0.1",
+    "kokoro>=0.9.0",
 ]
 
 # OpenVoice V2 has conflicting deps (gradio 3.x, numpy 1.22).

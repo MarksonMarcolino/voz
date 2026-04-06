@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from src.config import REFERENCE_AUDIO_DIR
@@ -63,3 +64,27 @@ def client(mock_pipeline):
     with TestClient(server_module.app) as c:
         yield c
     server_module.pipeline = None
+
+
+@pytest.fixture
+def mock_kokoro_engine():
+    """Mock KokoroEngine that yields a single silent audio chunk."""
+    engine = MagicMock()
+    # 100ms of silence at 24kHz — return a fresh iterator each call
+    engine.stream.side_effect = lambda *a, **kw: iter([np.zeros(2400, dtype=np.float32)])
+    return engine
+
+
+@pytest.fixture
+def ws_client(mock_pipeline, mock_kokoro_engine):
+    """FastAPI TestClient with both engines mocked."""
+    import src.server as server_module
+
+    server_module.pipeline = mock_pipeline
+    server_module.kokoro_engine = mock_kokoro_engine
+    from fastapi.testclient import TestClient
+
+    with TestClient(server_module.app) as c:
+        yield c
+    server_module.pipeline = None
+    server_module.kokoro_engine = None
