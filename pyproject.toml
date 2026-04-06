@@ -17,6 +17,7 @@ dependencies = [
     "resemble-perth>=1.0.1",
     "setuptools>=82.0.1",
     "kokoro>=0.9.0",
+    "httpx>=0.27",
 ]
 
 # OpenVoice V2 has conflicting deps (gradio 3.x, numpy 1.22).
@@ -26,4 +27,4 @@ dependencies = [
 tts-server = "src.server:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "httpx>=0.27"]
+dev = ["pytest>=8.0"]

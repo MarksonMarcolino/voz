@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from src.config import ACCENTS, KOKORO_LANG_CODES, KOKORO_SAMPLE_RATE, KOKORO_VOICES
+from src.conversation import run_conversation
 from src.pipeline import TTSPipeline, Mode
 from src.tts_kokoro import KokoroEngine
 
@@ -186,6 +187,54 @@ async def ws_synthesize(websocket: WebSocket):
         logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}", exc_info=True)
+
+
+# --- Conversational WebSocket (LLM → TTS pipeline) ---
+
+
+@app.websocket("/ws/conversation")
+async def ws_conversation(websocket: WebSocket):
+    await websocket.accept()
+    engine = get_kokoro_engine()
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+
+            msg_type = data.get("type")
+            if msg_type != "conversation":
+                await websocket.send_json({"type": "error", "detail": f"Unknown type: {msg_type}"})
+                continue
+
+            text = data.get("text", "").strip()
+            if not text:
+                await websocket.send_json({"type": "error", "detail": "Empty text"})
+                continue
+
+            language = data.get("language", "pt")
+            if language not in KOKORO_LANG_CODES:
+                await websocket.send_json({
+                    "type": "error",
+                    "detail": f"Unknown language: {language}. Available: {list(KOKORO_LANG_CODES.keys())}",
+                })
+                continue
+
+            voice = data.get("voice")
+            gender = data.get("gender", "female")
+
+            await run_conversation(
+                websocket=websocket,
+                text=text,
+                language=language,
+                engine=engine,
+                voice=voice,
+                gender=gender,
+            )
+
+    except WebSocketDisconnect:
+        logger.info("Conversation WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"Conversation WebSocket error: {e}", exc_info=True)
 
 
 # --- Kokoro voices REST endpoint ---

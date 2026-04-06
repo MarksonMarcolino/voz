@@ -61,6 +61,25 @@ KOKORO_LANG_CODES = {"pt": "p", "es": "e"}
 KOKORO_SAMPLE_RATE = 24000
 
 
+# Ollama LLM config
+OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_MODEL = "gemma3:4b"
+OLLAMA_TIMEOUT = 60.0
+
+SYSTEM_PROMPTS = {
+    "pt": (
+        "Voce e Sofia, assistente de atendimento ao cliente de telecomunicacoes. "
+        "Fale portugues brasileiro. Respostas concisas (2-3 frases)."
+    ),
+    "es": (
+        "Eres Sofia, asistente de atencion al cliente de telecomunicaciones. "
+        "Habla espanol. Respuestas concisas (2-3 oraciones)."
+    ),
+}
+
+SENTENCE_MIN_LENGTH = 10
+
+
 def get_reference_path(accent_id: str) -> Path:
     accent = ACCENTS.get(accent_id)
     if not accent:
