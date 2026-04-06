@@ -1,0 +1,29 @@
+# OS files
+.DS_Store
+
+# Download caches
+.cache_missing/
+.yt_cache/
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Model checkpoints (large files)
+checkpoints_v2/
+
+# CORAA cache (large downloads)
+.coraa_cache/
+
+# Generated samples
+samples/**/*.wav
+
+# pytest
+.pytest_cache/

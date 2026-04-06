@@ -1,0 +1,15 @@
+services:
+  tts-poc:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./reference_audio:/app/reference_audio
+      - ./samples:/app/samples
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
