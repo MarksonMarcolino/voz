@@ -89,8 +89,10 @@ def synthesize(req: SynthesizeRequest):
 # --- WebSocket endpoint (Kokoro streaming) ---
 
 
-def _audio_to_pcm_base64(audio: np.ndarray) -> str:
-    """Convert float32 audio to base64-encoded 16-bit PCM."""
+def _audio_to_pcm_base64(audio) -> str:
+    """Convert float32 audio (numpy or torch tensor) to base64-encoded 16-bit PCM."""
+    if not isinstance(audio, np.ndarray):
+        audio = np.array(audio, dtype=np.float32)
     clipped = np.clip(audio, -1.0, 1.0)
     pcm = (clipped * 32767).astype(np.int16)
     return base64.b64encode(pcm.tobytes()).decode("ascii")

@@ -63,7 +63,7 @@ KOKORO_SAMPLE_RATE = 24000
 
 # Ollama LLM config
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "gemma3:4b"
+OLLAMA_MODEL = "qwen3:1.7b"
 OLLAMA_TIMEOUT = 60.0
 
 SYSTEM_PROMPTS = {
