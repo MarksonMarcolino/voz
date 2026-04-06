@@ -25,4 +25,4 @@ dependencies = [
 tts-server = "src.server:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
