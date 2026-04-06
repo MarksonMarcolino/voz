@@ -31,6 +31,11 @@ ACCENTS = {
     "br_female": Accent("br_female", "Brazilian Female", "pt", "Brazil", "br_female.wav"),
     "br_male": Accent("br_male", "Brazilian Male", "pt", "Brazil", "br_male.wav"),
     "ar_rioplatense": Accent("ar_rioplatense", "Rioplatense (Buenos Aires)", "es", "Argentina", "ar_rioplatense.wav"),
+    "br_carioca": Accent("br_carioca", "Brazilian Carioca (Rio)", "pt", "Brazil", "br_carioca.wav"),
+    "br_gaucho": Accent("br_gaucho", "Brazilian Gaúcho (RS)", "pt", "Brazil", "br_gaucho.wav"),
+    "br_mineiro": Accent("br_mineiro", "Brazilian Mineiro (MG)", "pt", "Brazil", "br_mineiro.wav"),
+    "br_nordestino": Accent("br_nordestino", "Brazilian Nordestino (NE)", "pt", "Brazil", "br_nordestino.wav"),
+    "br_paulista": Accent("br_paulista", "Brazilian Paulista (SP)", "pt", "Brazil", "br_paulista.wav"),
 }
 
 TEST_PHRASES = {
