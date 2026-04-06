@@ -84,7 +84,46 @@ docker compose up --build
 GPU support requires NVIDIA Container Toolkit. The Docker build installs OpenVoice
 automatically with a fallback if it fails.
 
-## API Reference
+## Streaming TTS (Kokoro)
+
+The server includes a WebSocket endpoint for low-latency streaming synthesis using
+Kokoro TTS (~3.5x real-time on Apple M2, sub-second time-to-first-audio).
+
+### WS /ws/synthesize
+
+Connect via WebSocket and send JSON messages:
+
+```json
+{"type": "synthesize", "text": "Bom dia, tudo bem?", "language": "pt"}
+```
+
+Optional fields: `voice` (e.g., `"pf_dora"`), `gender` (`"female"` or `"male"`).
+
+Server streams back:
+```json
+{"type": "metadata", "sample_rate": 24000, "encoding": "pcm_s16le", "channels": 1}
+{"type": "audio", "data": "<base64 PCM>", "chunk_index": 0}
+{"type": "audio", "data": "<base64 PCM>", "chunk_index": 1}
+{"type": "done", "total_chunks": 2, "total_duration_s": 3.2, "generation_time_s": 0.9}
+```
+
+The connection is persistent — send multiple requests without reconnecting.
+
+### GET /voices
+
+Lists available Kokoro voices with `language`, `gender`, `voice` fields.
+
+### Benchmark Results (Apple M2, 8GB)
+
+| Engine | Avg Speed | Use Case |
+|--------|-----------|----------|
+| Chatterbox | 0.02x | Voice cloning (offline only) |
+| Kokoro | 3.5x | Conversational AI, streaming |
+| Piper | 30x | IVR, notifications, ultra-low latency |
+
+Run benchmarks: `PYTORCH_ENABLE_MPS_FALLBACK=1 uv run python scripts/benchmark_alternatives.py`
+
+## REST API (Chatterbox)
 
 ### GET /health
 
@@ -127,14 +166,15 @@ uv run pytest -v
 
 ```
 src/
-  config.py           Accent registry, paths, device detection
-  server.py           FastAPI endpoints
-  pipeline.py         TTSPipeline orchestration
-  tts_chatterbox.py   Chatterbox engine wrapper
+  config.py           Accent registry, Kokoro voices, paths
+  server.py           REST + WebSocket endpoints
+  pipeline.py         TTSPipeline orchestration (Chatterbox)
+  tts_kokoro.py       Kokoro engine wrapper (streaming)
+  tts_chatterbox.py   Chatterbox engine wrapper (voice cloning)
   tts_openvoice.py    OpenVoice V2 converter wrapper
 reference_audio/      10-30s WAV clips per accent
-scripts/              Model download, sample generation, reference sourcing
-tests/                pytest test suite (mocked ML models)
+scripts/              Benchmarks, model download, sample generation
+tests/                pytest test suite (28 tests, mocked ML models)
 ```
 
 ## Device Support
