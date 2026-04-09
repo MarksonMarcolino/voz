@@ -1,185 +1,178 @@
-# Voz
+<p align="center">
+  <h1 align="center">voz</h1>
+  <p align="center">self-hosted voice AI for Brazilian Portuguese and Rioplatense Spanish</p>
+</p>
 
-Self-hosted voice conversational AI for Brazilian Portuguese and Rioplatense Spanish.
-Pipelined LLM + TTS streaming with sub-second time-to-first-audio on local hardware.
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11+-3776ab?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/fastapi-0.115+-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/kokoro-TTS-ff6f00?logo=pytorch&logoColor=white" alt="Kokoro TTS">
+  <img src="https://img.shields.io/badge/ollama-LLM-black?logo=ollama&logoColor=white" alt="Ollama">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
+  <img src="https://img.shields.io/badge/tests-41%20passing-brightgreen" alt="Tests">
+</p>
 
-Built for telecom/ISP customer service scenarios where regional accent matters.
+---
 
-## Architecture
+Talk to an AI assistant in Portuguese or Spanish with regional accents. Type or speak, get a voice response back. Everything runs locally on your machine.
 
-Two synthesis modes:
-
-- **chatterbox_only** (default): Direct voice cloning from reference audio. Best quality, fastest.
-- **pipeline**: Chatterbox generates base speech (low `cfg_weight=0.3` to reduce accent bleed),
-  then OpenVoice V2 applies accent transfer from the reference clip. Useful for cross-accent experiments.
+The core idea: stream LLM tokens through a sentence buffer into TTS, so the user hears audio before the model finishes thinking.
 
 ```
-POST /synthesize
-     |
-     v
-  TTSPipeline
-     |
-     +-- chatterbox_only --> ChatterboxEngine --> .wav
-     |
-     +-- pipeline --> ChatterboxEngine --> OpenVoiceAccentConverter --> .wav
+you speak/type ──> LLM (Ollama) ──> sentence buffer ──> TTS (Kokoro) ──> you hear audio
+                   streaming          splits on . ? !    3.5x real-time   chunks arrive
+                   tokens             fires immediately  as they're made   while LLM continues
 ```
 
-## Available Accents
+## getting started
 
-| ID | Name | Language | Region |
-|----|------|----------|--------|
-| `br_female` | Brazilian Female | pt | Brazil |
-| `br_male` | Brazilian Male | pt | Brazil |
-| `br_carioca` | Brazilian Carioca (Rio) | pt | Brazil |
-| `br_gaucho` | Brazilian Gaucho (RS) | pt | Brazil |
-| `br_mineiro` | Brazilian Mineiro (MG) | pt | Brazil |
-| `br_nordestino` | Brazilian Nordestino (NE) | pt | Brazil |
-| `br_paulista` | Brazilian Paulista (SP) | pt | Brazil |
-| `ar_rioplatense` | Rioplatense (Buenos Aires) | es | Argentina |
-
-Each accent has a 10-30s reference WAV clip in `reference_audio/`.
-
-## Quick Start
-
-### Prerequisites
-
+**you need:**
 - Python 3.11+
-- [uv](https://docs.astral.sh/uv/) package manager
+- [uv](https://docs.astral.sh/uv/)
+- [Ollama](https://ollama.com/) with a model pulled (we use `qwen3:1.7b`)
 - ~4 GB disk for model checkpoints
-- Apple Silicon (MPS), NVIDIA GPU (CUDA), or CPU
-
-### Install and Run
+- Apple Silicon, NVIDIA GPU, or CPU
 
 ```bash
+# install deps
 uv sync
-uv run python scripts/download_models.py
-uv run tts-server
+
+# pull the LLM
+ollama pull qwen3:1.7b
+
+# start
+PYTORCH_ENABLE_MPS_FALLBACK=1 uv run voz
 ```
 
-Server starts at http://localhost:8000.
+Open **http://localhost:8000** and start talking.
 
-### OpenVoice V2 (optional, enables pipeline mode)
+## what's inside
 
-OpenVoice has dependency conflicts with the main project (gradio 3.x, numpy 1.22).
-Install it separately:
+### conversational websocket — `ws /ws/conversation`
 
-```bash
-bash scripts/install_openvoice.sh
+The main thing. Send text, get back interleaved transcript + audio.
+
+```json
+// you send
+{"type": "conversation", "text": "Como esta a conexao de fibra?", "language": "pt"}
+
+// server streams back
+{"type": "metadata", "sample_rate": 24000, "encoding": "pcm_s16le", "channels": 1}
+{"type": "transcript", "text": "A conexao esta estavel.", "sentence_index": 0}
+{"type": "audio", "data": "<base64 PCM>", "chunk_index": 0, "sentence_index": 0}
+{"type": "transcript", "text": "Posso verificar mais detalhes.", "sentence_index": 1}
+{"type": "audio", "data": "<base64 PCM>", "chunk_index": 1, "sentence_index": 1}
+{"type": "done", "total_chunks": 2, "total_duration_s": 3.2, "generation_time_s": 1.8}
 ```
 
-Or manually:
+Three async tasks run concurrently connected by queues:
+1. **LLM streamer** — streams tokens from Ollama, splits into sentences
+2. **TTS worker** — synthesizes each sentence with Kokoro as soon as it's ready
+3. **WS sender** — pushes audio chunks to the client
 
-```bash
-uv pip install git+https://github.com/myshell-ai/OpenVoice.git
-```
+This means the user hears audio for sentence 1 while the LLM is still generating sentence 3.
 
-The server works without it in `chatterbox_only` mode (the default).
+### streaming TTS — `ws /ws/synthesize`
 
-### Docker
-
-```bash
-docker compose up --build
-```
-
-GPU support requires NVIDIA Container Toolkit. The Docker build installs OpenVoice
-automatically with a fallback if it fails.
-
-## Streaming TTS (Kokoro)
-
-The server includes a WebSocket endpoint for low-latency streaming synthesis using
-Kokoro TTS (~3.5x real-time on Apple M2, sub-second time-to-first-audio).
-
-### WS /ws/synthesize
-
-Connect via WebSocket and send JSON messages:
+Direct text-to-speech without the LLM. Good for notifications, IVR, or testing voices.
 
 ```json
 {"type": "synthesize", "text": "Bom dia, tudo bem?", "language": "pt"}
 ```
 
-Optional fields: `voice` (e.g., `"pf_dora"`), `gender` (`"female"` or `"male"`).
+### REST endpoints
 
-Server streams back:
-```json
-{"type": "metadata", "sample_rate": 24000, "encoding": "pcm_s16le", "channels": 1}
-{"type": "audio", "data": "<base64 PCM>", "chunk_index": 0}
-{"type": "audio", "data": "<base64 PCM>", "chunk_index": 1}
-{"type": "done", "total_chunks": 2, "total_duration_s": 3.2, "generation_time_s": 0.9}
-```
+| Endpoint | What |
+|----------|------|
+| `GET /` | Chat UI |
+| `GET /health` | Health check |
+| `GET /voices` | Available Kokoro voices |
+| `GET /accents` | Available Chatterbox accents |
+| `POST /synthesize` | Chatterbox synthesis (returns WAV) |
 
-The connection is persistent — send multiple requests without reconnecting.
+### chat UI
 
-### GET /voices
+The web interface at `/` lets you type or use your microphone (Web Speech API, works in Chrome). Dark theme, language/voice picker, shows transcripts and plays audio as chunks arrive.
 
-Lists available Kokoro voices with `language`, `gender`, `voice` fields.
+## accents & voices
 
-### Benchmark Results (Apple M2, 8GB)
+**Kokoro voices** (fast, streaming):
 
-| Engine | Avg Speed | Use Case |
-|--------|-----------|----------|
-| Chatterbox | 0.02x | Voice cloning (offline only) |
-| Kokoro | 3.5x | Conversational AI, streaming |
-| Piper | 30x | IVR, notifications, ultra-low latency |
+| Voice | Language | Gender |
+|-------|----------|--------|
+| `pf_dora` | Portuguese | Female |
+| `pm_alex` | Portuguese | Male |
+| `ef_dora` | Spanish | Female |
+| `em_alex` | Spanish | Male |
 
-Run benchmarks: `PYTORCH_ENABLE_MPS_FALLBACK=1 uv run python scripts/benchmark_alternatives.py`
+**Chatterbox accents** (slow, voice cloning, offline):
 
-## REST API (Chatterbox)
+| ID | Region |
+|----|--------|
+| `br_female` `br_male` | Generic Brazilian |
+| `br_carioca` | Rio de Janeiro |
+| `br_gaucho` | Rio Grande do Sul |
+| `br_mineiro` | Minas Gerais |
+| `br_nordestino` | Northeast |
+| `br_paulista` | Sao Paulo |
+| `ar_rioplatense` | Buenos Aires |
 
-### GET /health
+Each accent has a 10-30s reference WAV clip in `reference_audio/`.
 
-Returns `{"status": "ok"}`.
+## benchmarks (Apple M2, 8GB)
 
-### GET /accents
+| Engine | Speed | Latency | Use case |
+|--------|-------|---------|----------|
+| Kokoro 82M | 3.5x real-time | ~1s | Conversational AI, streaming |
+| Piper | 30x real-time | ~100ms | IVR, notifications |
+| Chatterbox | 0.02x real-time | ~115s | Voice cloning (offline only) |
 
-Returns list of available accent objects with `id`, `name`, `language`, `region`.
-
-### POST /synthesize
-
-Generate accented speech. Returns `audio/wav`.
-
-**Request body (JSON):**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `text` | string | required | Text to synthesize (1-2000 chars) |
-| `accent` | string | required | Accent ID from `/accents` |
-| `mode` | string | `"chatterbox_only"` | `"chatterbox_only"` or `"pipeline"` |
-| `exaggeration` | float | `0.5` | Accent emphasis (0.25-2.0) |
-
-**Example:**
+Run them yourself:
 
 ```bash
-curl -X POST http://localhost:8000/synthesize \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Bom dia, tudo bem?", "accent": "br_carioca"}' \
-  --output output.wav
+PYTORCH_ENABLE_MPS_FALLBACK=1 uv run python scripts/benchmark_alternatives.py
 ```
 
-## Development
+## project structure
+
+```
+src/
+  server.py           FastAPI app, REST + WebSocket endpoints
+  conversation.py     pipelined LLM -> sentence buffer -> TTS -> WS
+  llm_ollama.py       async Ollama streaming client
+  tts_kokoro.py       Kokoro engine wrapper (streaming)
+  tts_chatterbox.py   Chatterbox engine wrapper (voice cloning)
+  tts_openvoice.py    OpenVoice V2 accent transfer
+  pipeline.py         Chatterbox pipeline orchestration
+  config.py           voices, accents, Ollama config
+static/
+  chat.html           web chat interface
+reference_audio/      accent reference clips
+scripts/              benchmarks, model download, utilities
+tests/                41 tests, all ML models mocked
+```
+
+## development
 
 ```bash
 uv sync --group dev
 uv run pytest -v
 ```
 
-## Project Structure
+## docker
 
-```
-src/
-  config.py           Accent registry, Kokoro voices, paths
-  server.py           REST + WebSocket endpoints
-  pipeline.py         TTSPipeline orchestration (Chatterbox)
-  tts_kokoro.py       Kokoro engine wrapper (streaming)
-  tts_chatterbox.py   Chatterbox engine wrapper (voice cloning)
-  tts_openvoice.py    OpenVoice V2 converter wrapper
-reference_audio/      10-30s WAV clips per accent
-scripts/              Benchmarks, model download, sample generation
-tests/                pytest test suite (28 tests, mocked ML models)
+```bash
+docker compose up --build
 ```
 
-## Device Support
+GPU support needs NVIDIA Container Toolkit.
 
-Automatic device detection: CUDA (NVIDIA GPU) > MPS (Apple Silicon) > CPU.
+## device support
 
-Apple Silicon note: `PerthImplicitWatermarker` is incompatible with MPS and is
-replaced with `DummyWatermarker` at runtime.
+Auto-detects: CUDA (NVIDIA) > MPS (Apple Silicon) > CPU.
+
+On Apple Silicon, set `PYTORCH_ENABLE_MPS_FALLBACK=1` before running.
+
+## license
+
+MIT
