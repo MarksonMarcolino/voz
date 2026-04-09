@@ -1,4 +1,4 @@
-"""FastAPI server for TTS PoC."""
+"""Voz — voice conversational AI server."""
 
 import asyncio
 import base64
@@ -20,7 +20,7 @@ from src.tts_kokoro import KokoroEngine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="TTS PoC", description="Chatterbox + OpenVoice V2 regional accent TTS")
+app = FastAPI(title="Voz", description="Self-hosted voice conversational AI for BR-PT and AR-ES")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 

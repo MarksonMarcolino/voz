@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sofia — Voice Chat</title>
+<title>Voz</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -115,12 +115,35 @@
   }
   #send-btn:hover { background: #2563eb; }
   #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #mic-btn {
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  #mic-btn:hover { border-color: #1d4ed8; }
+  #mic-btn.recording {
+    background: #7f1d1d;
+    border-color: #ef4444;
+    color: #ef4444;
+    animation: pulse 1.5s infinite;
+  }
+  #mic-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #mic-btn.unsupported { display: none; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Sofia</h1>
+  <h1>Voz</h1>
   <span class="status" id="status">Disconnected</span>
 </header>
 
@@ -141,11 +164,12 @@
 </div>
 
 <div id="messages">
-  <div class="msg system">Type a message to start chatting with Sofia.</div>
+  <div class="msg system">Type or speak a message to start.</div>
 </div>
 
 <div id="input-area">
-  <input type="text" id="text-input" placeholder="Type a message..." autofocus>
+  <button id="mic-btn" title="Hold to speak">&#x1F3A4;</button>
+  <input type="text" id="text-input" placeholder="Type or hold mic to speak..." autofocus>
   <button id="send-btn">Send</button>
 </div>
 
@@ -153,6 +177,7 @@
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('text-input');
 const sendBtn = document.getElementById('send-btn');
+const micBtn = document.getElementById('mic-btn');
 const statusEl = document.getElementById('status');
 const langEl = document.getElementById('lang');
 const voiceEl = document.getElementById('voice');
@@ -162,6 +187,92 @@ let audioCtx = null;
 let nextPlayTime = 0;
 let currentMsgEl = null;
 let sampleRate = 24000;
+
+// --- Speech Recognition (Web Speech API) ---
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+
+const SPEECH_LANGS = { pt: 'pt-BR', es: 'es-AR' };
+
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+
+  recognition.onresult = (event) => {
+    let transcript = '';
+    let isFinal = false;
+    for (const result of event.results) {
+      transcript += result[0].transcript;
+      if (result.isFinal) isFinal = true;
+    }
+    inputEl.value = transcript;
+    if (isFinal) {
+      stopRecording();
+      send();
+    }
+  };
+
+  recognition.onend = () => {
+    // If we still have text in the input (recognition ended without final result), send it
+    if (isRecording && inputEl.value.trim()) {
+      stopRecording();
+      send();
+    } else {
+      stopRecording();
+    }
+  };
+
+  recognition.onerror = (event) => {
+    if (event.error !== 'no-speech' && event.error !== 'aborted') {
+      addSystemMsg(`Mic error: ${event.error}`);
+    }
+    stopRecording();
+  };
+} else {
+  micBtn.classList.add('unsupported');
+}
+
+function startRecording() {
+  if (!recognition || isRecording) return;
+  isRecording = true;
+  micBtn.classList.add('recording');
+  inputEl.placeholder = 'Listening...';
+  recognition.lang = SPEECH_LANGS[langEl.value] || 'pt-BR';
+  recognition.start();
+}
+
+function stopRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+  micBtn.classList.remove('recording');
+  inputEl.placeholder = 'Type or hold mic to speak...';
+  try { recognition.stop(); } catch(e) {}
+}
+
+micBtn.addEventListener('mousedown', startRecording);
+micBtn.addEventListener('mouseup', () => {
+  if (isRecording && inputEl.value.trim()) {
+    stopRecording();
+    send();
+  } else {
+    stopRecording();
+  }
+});
+micBtn.addEventListener('mouseleave', () => { if (isRecording) stopRecording(); });
+
+// Touch support for mobile
+micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+micBtn.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  if (isRecording && inputEl.value.trim()) {
+    stopRecording();
+    send();
+  } else {
+    stopRecording();
+  }
+});
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';

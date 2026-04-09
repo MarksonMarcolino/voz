@@ -104,11 +104,13 @@ async def run_conversation(
                     return
                 sentences = buffer.add(token)
                 for s in sentences:
+                    logger.info(f"LLM: sentence {sentence_index} ready: \"{s[:60]}\"")
                     await sentence_queue.put(_SentenceReady(text=s, index=sentence_index))
                     sentence_index += 1
 
             remaining = buffer.flush()
             if remaining:
+                logger.info(f"LLM: final sentence {sentence_index}: \"{remaining[:60]}\"")
                 await sentence_queue.put(_SentenceReady(text=remaining, index=sentence_index))
 
         except OllamaError as e:
@@ -131,6 +133,7 @@ async def run_conversation(
                     break
 
                 sentence = item
+                logger.info(f"TTS [{sentence.index}]: synthesizing \"{sentence.text[:60]}\"")
 
                 # Send transcript before audio
                 await websocket.send_json({
@@ -139,13 +142,34 @@ async def run_conversation(
                     "sentence_index": sentence.index,
                 })
 
-                # Run Kokoro in thread pool
-                def _synthesize(text=sentence.text):
-                    return list(engine.stream(text, language, voice, gender))
+                # Run Kokoro in thread pool with timeout
+                text_to_speak = sentence.text
+                sent_lang = language
+                sent_voice = voice
+                sent_gender = gender
 
-                chunks = await loop.run_in_executor(None, _synthesize)
+                def _synthesize():
+                    return list(engine.stream(text_to_speak, sent_lang, sent_voice, sent_gender))
+
+                try:
+                    chunks = await asyncio.wait_for(
+                        loop.run_in_executor(None, _synthesize),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"TTS [{sentence.index}]: timed out after 30s")
+                    await websocket.send_json({
+                        "type": "error",
+                        "detail": f"TTS timed out for sentence: \"{sentence.text[:40]}...\"",
+                    })
+                    continue
+
+                if not chunks:
+                    logger.warning(f"TTS [{sentence.index}]: no audio generated")
+                    continue
 
                 for chunk in chunks:
+                    logger.info(f"TTS [{sentence.index}]: audio chunk, {len(chunk) if hasattr(chunk, '__len__') else '?'} samples")
                     await audio_queue.put(_AudioChunk(
                         audio=chunk,
                         sentence_index=sentence.index,
@@ -167,10 +191,12 @@ async def run_conversation(
                 if item is None or error_event.is_set():
                     break
 
-                total_samples += len(item.audio)
+                audio_data = _audio_to_pcm_base64(item.audio)
+                total_samples += len(item.audio) if hasattr(item.audio, '__len__') else 0
+                logger.info(f"WS: sending audio chunk {chunk_index} ({len(audio_data)} bytes b64)")
                 await websocket.send_json({
                     "type": "audio",
-                    "data": _audio_to_pcm_base64(item.audio),
+                    "data": audio_data,
                     "chunk_index": chunk_index,
                     "sentence_index": item.sentence_index,
                 })

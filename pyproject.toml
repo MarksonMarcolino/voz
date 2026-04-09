@@ -1,7 +1,7 @@
 [project]
-name = "tts-poc"
+name = "voz"
 version = "0.1.0"
-description = "TTS PoC: Chatterbox + OpenVoice V2 for regional BR-PT and AR-ES accents"
+description = "Voz: self-hosted voice conversational AI for BR-PT and AR-ES"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -24,7 +24,7 @@ dependencies = [
 # Install separately if needed: pip install git+https://github.com/myshell-ai/OpenVoice.git
 
 [project.scripts]
-tts-server = "src.server:main"
+voz = "src.server:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]

@@ -1,7 +1,7 @@
-# TTS PoC: Regional Accent Synthesis
+# Voz
 
-Proof-of-concept TTS server combining **Chatterbox Multilingual** (voice cloning)
-with **OpenVoice V2** (accent transfer) for Brazilian Portuguese and Rioplatense Spanish.
+Self-hosted voice conversational AI for Brazilian Portuguese and Rioplatense Spanish.
+Pipelined LLM + TTS streaming with sub-second time-to-first-audio on local hardware.
 
 Built for telecom/ISP customer service scenarios where regional accent matters.
 
