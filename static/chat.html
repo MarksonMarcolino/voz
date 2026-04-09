@@ -310,6 +310,8 @@ function handleMessage(msg) {
       // Reset audio context for new response
       if (audioCtx) audioCtx.close();
       audioCtx = new AudioContext({ sampleRate });
+      // Resume if browser suspended it (autoplay policy)
+      if (audioCtx.state === 'suspended') audioCtx.resume();
       nextPlayTime = 0;
       break;
 
@@ -349,21 +351,30 @@ function handleMessage(msg) {
 }
 
 function playAudioChunk(base64Data) {
-  if (!audioCtx) return;
-  const bytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-  const int16 = new Int16Array(bytes.buffer);
-  const float32 = new Float32Array(int16.length);
-  for (let i = 0; i < int16.length; i++) {
-    float32[i] = int16[i] / 32768;
+  if (!audioCtx) { console.warn('No AudioContext'); return; }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  try {
+    const bytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+    // Ensure proper alignment for Int16Array
+    const aligned = new ArrayBuffer(bytes.length);
+    new Uint8Array(aligned).set(bytes);
+    const int16 = new Int16Array(aligned);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i] / 32768;
+    }
+    const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
+    buffer.getChannelData(0).set(float32);
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioCtx.destination);
+    const startAt = Math.max(nextPlayTime, audioCtx.currentTime + 0.02);
+    source.start(startAt);
+    nextPlayTime = startAt + buffer.duration;
+    console.log(`Playing chunk: ${float32.length} samples, scheduled at ${startAt.toFixed(3)}s`);
+  } catch (e) {
+    console.error('Audio playback error:', e);
   }
-  const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
-  buffer.getChannelData(0).set(float32);
-  const source = audioCtx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(audioCtx.destination);
-  const startAt = Math.max(nextPlayTime, audioCtx.currentTime + 0.02);
-  source.start(startAt);
-  nextPlayTime = startAt + buffer.duration;
 }
 
 function send() {
