@@ -81,8 +81,23 @@ SENTENCE_MIN_LENGTH = 10
 MAX_HISTORY_TURNS = 10
 
 # Whisper STT config
-WHISPER_MODEL_SIZE = "base"
+# large-v3-turbo: 809M params, near-large-v3 quality at ~4x speed.
+# Two backends:
+#   - mlx-whisper (Apple Silicon): ~5-7x faster than faster-whisper on Mac.
+#     Uses MLX, runs on GPU/unified memory, native Apple Silicon.
+#   - faster-whisper (everything else): CTranslate2 + int8 on CPU.
+WHISPER_MODEL_SIZE = "large-v3-turbo"          # faster-whisper repo name
+WHISPER_MLX_REPO = "mlx-community/whisper-large-v3-turbo"  # MLX-converted variant
+WHISPER_COMPUTE_TYPE = "int8"                  # only used by faster-whisper
+WHISPER_BEAM_SIZE = 1                          # greedy: short utterances don't benefit from wider beams
 WHISPER_SAMPLE_RATE = 16000
+
+# Static glossary biases Whisper toward proper nouns / domain words the bot
+# knows about. Concatenated with the last assistant turn at transcribe time.
+WHISPER_STATIC_PROMPT = {
+    "pt": "Sofia, telecomunicações, fibra óptica, Wi-Fi, roteador, Madri, São Paulo.",
+    "es": "Sofia, telecomunicaciones, fibra óptica, Wi-Fi, router, Madrid, Buenos Aires.",
+}
 
 
 def get_reference_path(accent_id: str) -> Path:

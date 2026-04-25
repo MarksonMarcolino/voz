@@ -368,6 +368,8 @@
   <div class="debug-header">
     <span class="title">Debug</span>
     <span class="spacer"></span>
+    <button id="debug-tone" title="Play a 0.5s 440Hz tone through audioCtx">Test tone</button>
+    <button id="debug-sinks" title="List available audio output devices">Sinks</button>
     <button id="debug-copy">Copy log</button>
     <button id="debug-clear">Clear</button>
     <button id="debug-close">Hide</button>
@@ -456,6 +458,60 @@ debugCopyBtn.addEventListener('click', () => {
   navigator.clipboard.writeText(JSON.stringify(dbgBuffer, null, 2));
   dbg('mic', 'debug log copied to clipboard');
 });
+
+document.getElementById('debug-tone').addEventListener('click', async () => {
+  if (!audioCtx) { dbg('audio', 'no audioCtx'); return; }
+  if (audioCtx.state === 'suspended') {
+    try { await audioCtx.resume(); } catch (_) {}
+  }
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.frequency.value = 440;
+  gain.gain.value = 0.2;
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  const t0 = audioCtx.currentTime;
+  osc.start(t0);
+  osc.stop(t0 + 0.5);
+  dbg('audio', `test tone 440Hz 0.5s`, {
+    state: audioCtx.state,
+    sinkId: audioCtx.sinkId || 'default',
+    sampleRate: audioCtx.sampleRate,
+    baseLatency: audioCtx.baseLatency,
+    outputLatency: audioCtx.outputLatency || null,
+    destinationChannels: audioCtx.destination.channelCount,
+  });
+});
+
+document.getElementById('debug-sinks').addEventListener('click', async () => {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const outputs = devices.filter(d => d.kind === 'audiooutput').map(d => ({
+      label: d.label || '(unlabeled)', deviceId: d.deviceId
+    }));
+    dbg('audio', `audio outputs (${outputs.length})`, outputs);
+    if (audioCtx && typeof audioCtx.setSinkId === 'function') {
+      dbg('audio', 'audioCtx.setSinkId is supported — try forceSinkDefault() or forceSinkFirst() in console');
+    } else {
+      dbg('audio', 'audioCtx.setSinkId NOT supported in this browser');
+    }
+  } catch (e) {
+    dbg('err', `sink enumeration failed: ${e.message}`);
+  }
+});
+
+// Console helpers for narrowing down output device routing.
+window.forceSinkDefault = async () => {
+  if (!audioCtx?.setSinkId) return 'setSinkId unsupported';
+  await audioCtx.setSinkId('');
+  dbg('audio', `setSinkId('') applied; sinkId=${audioCtx.sinkId}`);
+  return audioCtx.sinkId;
+};
+window.forceSinkById = async (id) => {
+  if (!audioCtx?.setSinkId) return 'setSinkId unsupported';
+  await audioCtx.setSinkId(id);
+  dbg('audio', `setSinkId(${id}) applied; sinkId=${audioCtx.sinkId}`);
+  return audioCtx.sinkId;
+};
 
 const urlParams = new URLSearchParams(location.search);
 const debugInitialOpen = urlParams.get('debug') === '1' || localStorage.vozDebug === '1';
@@ -641,20 +697,17 @@ function wsSend(payload) {
 function handleMessage(msg) {
   switch (msg.type) {
     case 'metadata':
-      sampleRate = msg.sample_rate || 24000;
+      sampleRate = msg.sample_rate || 24000;  // server PCM rate (Kokoro = 24k)
       stopPlayback();
-      // AudioContext was pre-created on page load (bound to normal output
-      // device, not the silent communications device that getUserMedia
-      // forces). Only re-create if sample rate genuinely differs.
-      if (!audioCtx || audioCtx.sampleRate !== sampleRate) {
-        if (audioCtx) { try { audioCtx.close(); } catch(_) {} }
-        audioCtx = new AudioContext({ sampleRate });
-      }
+      // Reuse the pre-created AudioContext (already bound to native output
+      // device). The chunk's own sampleRate is passed to createBuffer below;
+      // Web Audio resamples on play.
+      if (!audioCtx) ensureAudioContext();
       nextPlayTime = 0;
       binaryFrameCount = 0;
       totalBinaryBytes = 0;
       audioReady = (audioCtx.state === 'suspended' ? audioCtx.resume() : Promise.resolve())
-        .then(() => dbg('audio', `ctx ready state=${audioCtx.state} sr=${sampleRate} sinkId=${audioCtx.sinkId || 'default'}`))
+        .then(() => dbg('audio', `ctx ready state=${audioCtx.state} ctxSr=${audioCtx.sampleRate} chunkSr=${sampleRate} sinkId=${audioCtx.sinkId || 'default'}`))
         .catch(e => dbg('err', `ctx resume failed: ${e.message}`));
       isStreaming = true;
       sendBtn.textContent = 'Stop';
@@ -949,11 +1002,12 @@ async function startVAD() {
     vadInstance = await vad.MicVAD.new({
       baseAssetPath: '/static/vendor/vad/',
       onnxWASMBasePath: '/static/vendor/ort/',
+      model: 'v5',                    // Silero v5 (better than legacy v4)
       positiveSpeechThreshold: 0.5,
-      negativeSpeechThreshold: 0.25,
-      minSpeechFrames: 6,
-      preSpeechPadFrames: 6,
-      redemptionFrames: 12,
+      negativeSpeechThreshold: 0.35,  // v5 docs recommendation
+      minSpeechMs: 300,
+      preSpeechPadMs: 200,            // capture ~200ms before VAD triggers (avoid clipped word starts)
+      redemptionMs: 700,              // wait ~700ms of silence before ending (allows mid-sentence breaths)
       onSpeechStart: () => {
         dbg('vad', 'speechStart');
         vadIndicator.classList.add('speaking');
@@ -1036,8 +1090,12 @@ connect();
 function ensureAudioContext() {
   if (audioCtx) return;
   try {
-    audioCtx = new AudioContext({ sampleRate: 24000 });
-    sampleRate = 24000;
+    // Don't force a sample rate. Forcing 24000 on macOS Chrome causes silent
+    // output (the resampler from 24k → 48k native is broken in some
+    // Chrome/macOS combos). The context picks the system rate (typically
+    // 48000); per-chunk buffers carry their own 24000 rate and Web Audio
+    // resamples them on AudioBufferSourceNode playback.
+    audioCtx = new AudioContext();
     audioReady = audioCtx.state === 'suspended'
       ? audioCtx.resume().catch(_ => {})
       : Promise.resolve();

@@ -18,7 +18,7 @@ from src.config import ACCENTS, KOKORO_LANG_CODES, KOKORO_SAMPLE_RATE, KOKORO_VO
 from src.conversation import run_conversation
 from src.history import ConversationHistory
 from src.pipeline import TTSPipeline, Mode
-from src.stt_whisper import WhisperEngine
+from src.stt_whisper import WhisperEngine, build_stt_prompt
 from src.tts_kokoro import KokoroEngine
 
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +31,10 @@ async def lifespan(_: FastAPI):
     async def _warm():
         try:
             logger.info("Warming Whisper model in background...")
-            await asyncio.to_thread(get_whisper_engine()._get_model)
+            stt = get_whisper_engine()
+            executor = getattr(stt, "_executor", None)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(executor, stt._get_model)
             logger.info("Whisper ready")
         except Exception as e:
             logger.warning(f"Whisper warm failed: {e}")
@@ -68,6 +71,8 @@ _VENDOR_ASSETS = {
         "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/bundle.min.js",
     "vad/silero_vad_legacy.onnx":
         "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/silero_vad_legacy.onnx",
+    "vad/silero_vad_v5.onnx":
+        "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/silero_vad_v5.onnx",
     "vad/vad.worklet.bundle.min.js":
         "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/vad.worklet.bundle.min.js",
     # vad-web bundles ort@1.22 internally; it loads these via dynamic import
@@ -117,10 +122,24 @@ def get_kokoro_engine() -> KokoroEngine:
     return kokoro_engine
 
 
-def get_whisper_engine() -> WhisperEngine:
+def get_whisper_engine():
+    """Pick the fastest Whisper backend for the current platform.
+
+    Apple Silicon → mlx-whisper (~5-7x faster than CTranslate2 on Mac).
+    Everything else → faster-whisper int8 on CPU.
+    """
     global whisper_engine
     if whisper_engine is None:
-        whisper_engine = WhisperEngine()
+        import platform
+        import sys
+        is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+        if is_apple_silicon:
+            from src.stt_mlx import MlxWhisperEngine
+            whisper_engine = MlxWhisperEngine()
+            logger.info("STT backend: mlx-whisper (Apple Silicon)")
+        else:
+            whisper_engine = WhisperEngine()
+            logger.info("STT backend: faster-whisper (CTranslate2)")
     return whisper_engine
 
 
@@ -348,8 +367,14 @@ async def ws_conversation(websocket: WebSocket):
         loop = asyncio.get_event_loop()
         stt = get_whisper_engine()
 
+        # Bias Whisper toward the bot's prior turn + static glossary; this
+        # massively improves recognition of proper nouns and domain terms.
+        prompt = build_stt_prompt(history, current_language)
+        # MLX engines pin transcribe to a single dedicated worker (MLX has
+        # per-thread GPU command queues; thread hopping costs 5-15s/call).
+        executor = getattr(stt, "_executor", None)
         text = await loop.run_in_executor(
-            None, stt.transcribe, audio_bytes, current_language
+            executor, stt.transcribe, audio_bytes, current_language, prompt
         )
 
         # User may have refreshed or navigated away during a slow first STT call.
