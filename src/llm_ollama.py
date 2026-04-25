@@ -20,19 +20,22 @@ async def stream_chat(
     language: str = "pt",
     system_prompt: str | None = None,
     model: str = OLLAMA_MODEL,
+    messages: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from Ollama chat API.
 
     Yields individual token strings as they arrive.
     Raises OllamaError if Ollama is unreachable.
-    """
-    if system_prompt is None:
-        system_prompt = SYSTEM_PROMPTS.get(language, SYSTEM_PROMPTS["pt"])
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prompt},
-    ]
+    If ``messages`` is provided, it is used directly (ignoring prompt/system_prompt).
+    """
+    if messages is None:
+        if system_prompt is None:
+            system_prompt = SYSTEM_PROMPTS.get(language, SYSTEM_PROMPTS["pt"])
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(OLLAMA_TIMEOUT, connect=5.0)) as client:

@@ -23,6 +23,9 @@ wheels/
 checkpoints_v2/
 piper-voices/
 
+# Vendored browser assets (downloaded on first server startup)
+static/vendor/
+
 # Download caches
 .cache_missing/
 .yt_cache/
@@ -42,3 +45,4 @@ htmlcov/
 *.swp
 *.swo
 *~
+.gstack/

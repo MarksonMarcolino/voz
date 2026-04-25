@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Voz</title>
+<!-- vad-web bundles its own onnxruntime-web@1.22 internally. -->
+<!-- Loaded same-origin: cross-origin scripts get about:blank as their base URL -->
+<!-- for dynamic import(), which breaks resolution of the WASM .mjs glue. -->
+<script src="/static/vendor/vad/bundle.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -30,6 +34,29 @@
     color: #666;
   }
   header .status.connected { background: #0a2a0a; color: #4ade80; }
+  header .mic-status {
+    font-size: 11px;
+    padding: 3px 9px;
+    border-radius: 12px;
+    background: #1a1a1a;
+    color: #888;
+    border: 1px solid #2a2a2a;
+  }
+  header .mic-status.granted { color: #4ade80; border-color: #14532d; }
+  header .mic-status.denied { color: #f87171; border-color: #450a0a; }
+  header .mic-status.prompt { color: #fbbf24; border-color: #422006; }
+  header .header-btns { margin-left: auto; display: flex; gap: 8px; }
+  header button.icon-btn {
+    background: #1a1a1a;
+    color: #888;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  header button.icon-btn:hover { color: #e0e0e0; border-color: #555; }
+  header button.icon-btn.active { color: #4ade80; border-color: #4ade80; }
   .settings {
     padding: 8px 20px;
     border-bottom: 1px solid #222;
@@ -67,13 +94,63 @@
     background: #1d4ed8;
     color: white;
     border-bottom-right-radius: 4px;
+    white-space: pre-wrap;
   }
+  .msg.user.pending {
+    opacity: 0.7;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-style: italic;
+  }
+  .msg.user.pending .spinner {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .msg.user.pending .spinner span {
+    width: 5px; height: 5px;
+    background: white;
+    border-radius: 50%;
+    opacity: 0.6;
+    animation: dot-pulse 1.2s infinite;
+  }
+  .msg.user.pending .spinner span:nth-child(2) { animation-delay: 0.2s; }
+  .msg.user.pending .spinner span:nth-child(3) { animation-delay: 0.4s; }
   .msg.assistant {
     align-self: flex-start;
     background: #1a1a1a;
     border-bottom-left-radius: 4px;
   }
   .msg.assistant .text { margin-bottom: 6px; }
+  .msg.assistant .text strong { color: #fff; font-weight: 600; }
+  .msg.assistant .text em { color: #d4d4d8; font-style: italic; }
+  .msg.assistant .text code {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    background: #2a2a2a;
+    color: #f0abfc;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12.5px;
+  }
+  .msg.assistant .text pre {
+    background: #0a0a0a;
+    border: 1px solid #2a2a2a;
+    padding: 8px 10px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 6px 0;
+  }
+  .msg.assistant .text pre code {
+    background: transparent;
+    color: #e0e0e0;
+    padding: 0;
+    font-size: 12.5px;
+  }
+  .msg.assistant .text h1,
+  .msg.assistant .text h2,
+  .msg.assistant .text h3 {
+    font-size: 14px; font-weight: 600; margin: 4px 0; color: #fff;
+  }
   .msg.assistant .meta {
     font-size: 11px;
     color: #666;
@@ -85,6 +162,33 @@
     font-style: italic;
   }
   .msg.assistant.streaming { border-left: 2px solid #4ade80; }
+  .msg.assistant .audio-status {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #888;
+    font-style: italic;
+  }
+  .msg.assistant .audio-status.show { display: inline-flex; }
+  .msg.assistant .audio-status .spinner {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .msg.assistant .audio-status .spinner span {
+    width: 5px; height: 5px;
+    background: currentColor;
+    border-radius: 50%;
+    opacity: 0.4;
+    animation: dot-pulse 1.2s infinite;
+  }
+  .msg.assistant .audio-status .spinner span:nth-child(2) { animation-delay: 0.2s; }
+  .msg.assistant .audio-status .spinner span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dot-pulse {
+    0%, 80%, 100% { opacity: 0.4; transform: scale(1); }
+    40% { opacity: 1; transform: scale(1.2); }
+  }
   #input-area {
     padding: 12px 20px;
     border-top: 1px solid #222;
@@ -115,6 +219,8 @@
   }
   #send-btn:hover { background: #2563eb; }
   #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #send-btn.stop { background: #dc2626; }
+  #send-btn.stop:hover { background: #ef4444; }
   #mic-btn {
     background: #1a1a1a;
     color: #e0e0e0;
@@ -138,6 +244,81 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
   }
+  .vad-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+  }
+  .vad-toggle input[type="checkbox"] { accent-color: #4ade80; }
+  .vad-toggle label { color: #888; font-size: 13px; cursor: pointer; }
+  .vad-indicator {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #4ade80;
+  }
+  .vad-indicator.active { display: flex; }
+  .vad-indicator .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #4ade80;
+    animation: pulse 1.5s infinite;
+  }
+  .vad-indicator.speaking .dot { background: #ef4444; }
+
+  /* Debug panel */
+  #debug-panel {
+    display: none;
+    border-top: 1px solid #2a2a2a;
+    background: #050505;
+    color: #ccc;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 11px;
+    height: 220px;
+    flex-direction: column;
+  }
+  #debug-panel.open { display: flex; }
+  .debug-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #1a1a1a;
+    background: #0a0a0a;
+  }
+  .debug-header .title { color: #888; font-weight: 600; }
+  .debug-header button {
+    background: #1a1a1a;
+    color: #888;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .debug-header button:hover { color: #e0e0e0; }
+  .debug-header .spacer { flex: 1; }
+  #debug-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 12px;
+    line-height: 1.5;
+  }
+  .dbg-row { display: flex; gap: 8px; align-items: baseline; }
+  .dbg-row .t { color: #555; flex-shrink: 0; }
+  .dbg-row .ch { flex-shrink: 0; min-width: 44px; font-weight: 600; }
+  .dbg-row .ch.ws-out { color: #60a5fa; }
+  .dbg-row .ch.ws-in { color: #34d399; }
+  .dbg-row .ch.audio { color: #fbbf24; }
+  .dbg-row .ch.vad { color: #c084fc; }
+  .dbg-row .ch.mic { color: #f472b6; }
+  .dbg-row .ch.err { color: #f87171; }
+  .dbg-row .msg { color: #e0e0e0; word-break: break-all; }
+  .dbg-row .data { color: #888; }
 </style>
 </head>
 <body>
@@ -145,6 +326,11 @@
 <header>
   <h1>Voz</h1>
   <span class="status" id="status">Disconnected</span>
+  <span class="mic-status" id="mic-status" title="Microphone permission state">Mic: …</span>
+  <div class="header-btns">
+    <button class="icon-btn" id="debug-btn" title="Toggle debug panel">Debug</button>
+    <button class="icon-btn" id="clear-btn" title="Clear conversation history">Clear</button>
+  </div>
 </header>
 
 <div class="settings">
@@ -161,6 +347,10 @@
     <option value="ef_dora">ef_dora (ES female)</option>
     <option value="em_alex">em_alex (ES male)</option>
   </select>
+  <div class="vad-toggle">
+    <input type="checkbox" id="vad-toggle">
+    <label for="vad-toggle">Hands-free</label>
+  </div>
 </div>
 
 <div id="messages">
@@ -169,8 +359,20 @@
 
 <div id="input-area">
   <button id="mic-btn" title="Hold to speak">&#x1F3A4;</button>
+  <div class="vad-indicator" id="vad-indicator"><span class="dot"></span><span>Listening...</span></div>
   <input type="text" id="text-input" placeholder="Type or hold mic to speak..." autofocus>
   <button id="send-btn">Send</button>
+</div>
+
+<div id="debug-panel">
+  <div class="debug-header">
+    <span class="title">Debug</span>
+    <span class="spacer"></span>
+    <button id="debug-copy">Copy log</button>
+    <button id="debug-clear">Clear</button>
+    <button id="debug-close">Hide</button>
+  </div>
+  <div id="debug-log"></div>
 </div>
 
 <script>
@@ -178,20 +380,122 @@ const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('text-input');
 const sendBtn = document.getElementById('send-btn');
 const micBtn = document.getElementById('mic-btn');
+const clearBtn = document.getElementById('clear-btn');
 const statusEl = document.getElementById('status');
 const langEl = document.getElementById('lang');
 const voiceEl = document.getElementById('voice');
+const vadToggle = document.getElementById('vad-toggle');
+const vadIndicator = document.getElementById('vad-indicator');
+const micStatusEl = document.getElementById('mic-status');
+const debugBtn = document.getElementById('debug-btn');
+const debugPanel = document.getElementById('debug-panel');
+const debugLog = document.getElementById('debug-log');
+const debugCopyBtn = document.getElementById('debug-copy');
+const debugClearBtn = document.getElementById('debug-clear');
+const debugCloseBtn = document.getElementById('debug-close');
 
 let ws = null;
 let audioCtx = null;
+let audioReady = Promise.resolve();
 let nextPlayTime = 0;
 let currentMsgEl = null;
 let sampleRate = 24000;
+let isStreaming = false;
+let activeSources = [];
+let totalBinaryBytes = 0;
+let binaryFrameCount = 0;
+let pendingUserMsgEl = null;  // user bubble created on VAD speechEnd, filled on transcript_input
 
-// --- Speech Recognition (Web Speech API) ---
+// --- Debug panel -----------------------------------------------------------
+const DBG_BUFFER_MAX = 500;
+const dbgBuffer = [];
+const t0 = performance.now();
+
+function dbg(channel, msg, data) {
+  const entry = {
+    t: ((performance.now() - t0) / 1000).toFixed(3),
+    channel,
+    msg,
+    data: data === undefined ? null : data,
+  };
+  dbgBuffer.push(entry);
+  if (dbgBuffer.length > DBG_BUFFER_MAX) dbgBuffer.shift();
+  if (debugPanel.classList.contains('open')) {
+    appendDbgRow(entry);
+  }
+}
+
+function appendDbgRow(entry) {
+  const row = document.createElement('div');
+  row.className = 'dbg-row';
+  const chClass = entry.channel.replace(/[^a-z0-9-]/gi, '');
+  row.innerHTML = `<span class="t">${entry.t}s</span><span class="ch ${chClass}">${entry.channel}</span><span class="msg"></span>`;
+  row.querySelector('.msg').textContent = entry.data == null
+    ? entry.msg
+    : `${entry.msg} ${typeof entry.data === 'string' ? entry.data : JSON.stringify(entry.data)}`;
+  debugLog.appendChild(row);
+  debugLog.scrollTop = debugLog.scrollHeight;
+}
+
+function renderDbgPanel() {
+  debugLog.innerHTML = '';
+  for (const e of dbgBuffer) appendDbgRow(e);
+}
+
+function setDebugOpen(open) {
+  debugPanel.classList.toggle('open', open);
+  debugBtn.classList.toggle('active', open);
+  localStorage.vozDebug = open ? '1' : '0';
+  if (open) renderDbgPanel();
+}
+
+debugBtn.addEventListener('click', () => setDebugOpen(!debugPanel.classList.contains('open')));
+debugCloseBtn.addEventListener('click', () => setDebugOpen(false));
+debugClearBtn.addEventListener('click', () => { dbgBuffer.length = 0; debugLog.innerHTML = ''; });
+debugCopyBtn.addEventListener('click', () => {
+  navigator.clipboard.writeText(JSON.stringify(dbgBuffer, null, 2));
+  dbg('mic', 'debug log copied to clipboard');
+});
+
+const urlParams = new URLSearchParams(location.search);
+const debugInitialOpen = urlParams.get('debug') === '1' || localStorage.vozDebug === '1';
+if (debugInitialOpen) setDebugOpen(true);
+
+// Mirror console.error and uncaught errors
+const origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  origConsoleError(...args);
+  dbg('err', args.map(a => a instanceof Error ? a.stack || a.message : String(a)).join(' '));
+};
+window.addEventListener('error', (e) => dbg('err', `${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => dbg('err', `unhandled: ${e.reason && (e.reason.stack || e.reason.message || e.reason)}`));
+
+// --- Markdown rendering (assistant messages only) --------------------------
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderMarkdown(text) {
+  let s = escapeHtml(text);
+  // Code fences first (they may contain other markup that should stay literal)
+  s = s.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+  s = s.replace(/(^|[^_\w])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
+  s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  s = s.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  s = s.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  s = s.replace(/\n/g, '<br>');
+  return s;
+}
+
+// --- Speech Recognition (Web Speech API) -----------------------------------
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let isRecording = false;
+let alreadySent = false;  // dedupe between onresult(isFinal) and onend
 
 const SPEECH_LANGS = { pt: 'pt-BR', es: 'es-AR' };
 
@@ -208,6 +512,7 @@ if (SpeechRecognition) {
       if (result.isFinal) isFinal = true;
     }
     inputEl.value = transcript;
+    dbg('mic', `result interim="${!isFinal}" text="${transcript}"`);
     if (isFinal) {
       stopRecording();
       send();
@@ -215,16 +520,17 @@ if (SpeechRecognition) {
   };
 
   recognition.onend = () => {
-    // If we still have text in the input (recognition ended without final result), send it
-    if (isRecording && inputEl.value.trim()) {
-      stopRecording();
+    dbg('mic', `onend isRecording=${isRecording} alreadySent=${alreadySent} value="${inputEl.value}"`);
+    // Fallback: if recognition ended without delivering a final result,
+    // send whatever interim text we have. send() guards against duplicates.
+    if (inputEl.value.trim() && !alreadySent) {
       send();
-    } else {
-      stopRecording();
     }
+    stopRecording();
   };
 
   recognition.onerror = (event) => {
+    dbg('mic', `onerror ${event.error}`);
     if (event.error !== 'no-speech' && event.error !== 'aborted') {
       addSystemMsg(`Mic error: ${event.error}`);
     }
@@ -237,10 +543,17 @@ if (SpeechRecognition) {
 function startRecording() {
   if (!recognition || isRecording) return;
   isRecording = true;
+  alreadySent = false;
+  inputEl.value = '';
   micBtn.classList.add('recording');
   inputEl.placeholder = 'Listening...';
   recognition.lang = SPEECH_LANGS[langEl.value] || 'pt-BR';
-  recognition.start();
+  try {
+    recognition.start();
+    dbg('mic', `start lang=${recognition.lang}`);
+  } catch (e) {
+    dbg('mic', `start failed: ${e.message}`);
+  }
 }
 
 function stopRecording() {
@@ -251,29 +564,23 @@ function stopRecording() {
   try { recognition.stop(); } catch(e) {}
 }
 
+// Mic events: only stop recording on release. recognition.onresult(isFinal)
+// or recognition.onend (fallback) is the single sender.
+function onMicRelease(e) {
+  if (e) e.preventDefault();
+  if (isRecording) {
+    dbg('mic', 'release');
+    try { recognition.stop(); } catch(_) {}
+  }
+}
+
 micBtn.addEventListener('mousedown', startRecording);
-micBtn.addEventListener('mouseup', () => {
-  if (isRecording && inputEl.value.trim()) {
-    stopRecording();
-    send();
-  } else {
-    stopRecording();
-  }
-});
-micBtn.addEventListener('mouseleave', () => { if (isRecording) stopRecording(); });
-
-// Touch support for mobile
+micBtn.addEventListener('mouseup', onMicRelease);
+micBtn.addEventListener('mouseleave', () => { if (isRecording) onMicRelease(); });
 micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-micBtn.addEventListener('touchend', (e) => {
-  e.preventDefault();
-  if (isRecording && inputEl.value.trim()) {
-    stopRecording();
-    send();
-  } else {
-    stopRecording();
-  }
-});
+micBtn.addEventListener('touchend', onMicRelease);
 
+// --- WebSocket -------------------------------------------------------------
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws/conversation`);
@@ -281,87 +588,188 @@ function connect() {
   ws.onopen = () => {
     statusEl.textContent = 'Connected';
     statusEl.classList.add('connected');
-    inputEl.disabled = false;
-    sendBtn.disabled = false;
+    dbg('ws-in', 'open');
   };
 
   ws.onclose = () => {
     statusEl.textContent = 'Disconnected';
     statusEl.classList.remove('connected');
-    inputEl.disabled = true;
-    sendBtn.disabled = true;
+    isStreaming = false;
+    sendBtn.textContent = 'Send';
+    sendBtn.classList.remove('stop');
+    dbg('ws-in', 'close — retry in 2s');
     setTimeout(connect, 2000);
   };
 
-  ws.onerror = () => {
+  ws.onerror = (e) => {
+    dbg('err', `ws error`);
     addSystemMsg('Connection error. Retrying...');
   };
 
+  ws.binaryType = 'arraybuffer';
   ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    handleMessage(msg);
+    if (event.data instanceof ArrayBuffer) {
+      binaryFrameCount += 1;
+      totalBinaryBytes += event.data.byteLength;
+      playAudioChunkBinary(event.data);
+    } else {
+      const msg = JSON.parse(event.data);
+      const summary = { type: msg.type };
+      if (msg.text) summary.text = msg.text.length > 60 ? msg.text.slice(0, 60) + '…' : msg.text;
+      if (msg.detail) summary.detail = msg.detail;
+      if (msg.total_chunks != null) summary.total_chunks = msg.total_chunks;
+      if (msg.sample_rate) summary.sample_rate = msg.sample_rate;
+      dbg('ws-in', 'json', summary);
+      handleMessage(msg);
+    }
   };
+}
+
+function wsSend(payload) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  if (typeof payload === 'string' || payload instanceof String) {
+    const parsed = JSON.parse(payload);
+    dbg('ws-out', 'json', { type: parsed.type, ...(parsed.text ? { text: parsed.text } : {}) });
+    ws.send(payload);
+  } else {
+    dbg('ws-out', `binary ${payload.byteLength} bytes`);
+    ws.send(payload);
+  }
+  return true;
 }
 
 function handleMessage(msg) {
   switch (msg.type) {
     case 'metadata':
       sampleRate = msg.sample_rate || 24000;
-      // Reset audio context for new response
-      if (audioCtx) audioCtx.close();
-      audioCtx = new AudioContext({ sampleRate });
-      // Resume if browser suspended it (autoplay policy)
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      stopPlayback();
+      // AudioContext was pre-created on page load (bound to normal output
+      // device, not the silent communications device that getUserMedia
+      // forces). Only re-create if sample rate genuinely differs.
+      if (!audioCtx || audioCtx.sampleRate !== sampleRate) {
+        if (audioCtx) { try { audioCtx.close(); } catch(_) {} }
+        audioCtx = new AudioContext({ sampleRate });
+      }
       nextPlayTime = 0;
+      binaryFrameCount = 0;
+      totalBinaryBytes = 0;
+      audioReady = (audioCtx.state === 'suspended' ? audioCtx.resume() : Promise.resolve())
+        .then(() => dbg('audio', `ctx ready state=${audioCtx.state} sr=${sampleRate} sinkId=${audioCtx.sinkId || 'default'}`))
+        .catch(e => dbg('err', `ctx resume failed: ${e.message}`));
+      isStreaming = true;
+      sendBtn.textContent = 'Stop';
+      sendBtn.classList.add('stop');
+      pauseVADForPlayback();
+      // Pre-create the assistant bubble so the spinner shows during the LLM wait
+      if (!currentMsgEl) currentMsgEl = addAssistantMsg('');
+      setAudioStatus(currentMsgEl, 'thinking');
       break;
 
     case 'transcript':
       if (!currentMsgEl) {
         currentMsgEl = addAssistantMsg('');
       }
-      const textEl = currentMsgEl.querySelector('.text');
-      textEl.textContent += (textEl.textContent ? ' ' : '') + msg.text;
+      const prev = currentMsgEl.dataset.raw || '';
+      currentMsgEl.dataset.raw = prev + (prev ? ' ' : '') + msg.text;
+      currentMsgEl.querySelector('.text').innerHTML = renderMarkdown(currentMsgEl.dataset.raw);
       currentMsgEl.classList.add('streaming');
+      // Audio hasn't started yet — show "generating audio" until first chunk
+      if (binaryFrameCount === 0) setAudioStatus(currentMsgEl, 'generating');
       scrollToBottom();
-      break;
-
-    case 'audio':
-      playAudioChunk(msg.data);
       break;
 
     case 'done':
       if (currentMsgEl) {
         currentMsgEl.classList.remove('streaming');
+        setAudioStatus(currentMsgEl, 'done');
         const meta = currentMsgEl.querySelector('.meta');
-        meta.textContent = `${msg.total_duration_s}s audio | ${msg.generation_time_s}s generation | ${msg.total_chunks} chunks`;
+        const parts = [];
+        if (msg.llm_first_token_s != null) parts.push(`TTFT ${msg.llm_first_token_s}s`);
+        if (msg.first_audio_s != null) parts.push(`first audio ${msg.first_audio_s}s`);
+        if (msg.llm_total_s != null) parts.push(`LLM ${msg.llm_total_s}s`);
+        parts.push(`total ${msg.generation_time_s}s`);
+        parts.push(`${msg.total_duration_s}s audio`);
+        parts.push(`${msg.total_chunks} chunks`);
+        meta.textContent = parts.join(' | ');
       }
       currentMsgEl = null;
-      inputEl.disabled = false;
-      sendBtn.disabled = false;
+      isStreaming = false;
+      sendBtn.textContent = 'Send';
+      sendBtn.classList.remove('stop');
+      // Wait for queued audio to finish playing before re-opening the mic,
+      // otherwise the tail of the bot's voice gets captured by VAD.
+      if (audioCtx) {
+        const remaining = Math.max(0, (nextPlayTime - audioCtx.currentTime)) * 1000;
+        setTimeout(resumeVADAfterPlayback, remaining + 200);
+      } else {
+        resumeVADAfterPlayback();
+      }
       inputEl.focus();
+      break;
+
+    case 'interrupted':
+      if (currentMsgEl) {
+        currentMsgEl.classList.remove('streaming');
+        setAudioStatus(currentMsgEl, 'done');
+        currentMsgEl.querySelector('.meta').textContent = 'interrupted';
+      }
+      currentMsgEl = null;
+      isStreaming = false;
+      sendBtn.textContent = 'Send';
+      sendBtn.classList.remove('stop');
+      resumeVADAfterPlayback();
+      inputEl.focus();
+      break;
+
+    case 'transcript_input':
+      fillPendingUserMsg(msg.text);
+      break;
+
+    case 'history_cleared':
+      // server confirmed clear; UI was already cleared optimistically
       break;
 
     case 'error':
       addSystemMsg(`Error: ${msg.detail}`);
-      inputEl.disabled = false;
-      sendBtn.disabled = false;
+      isStreaming = false;
+      sendBtn.textContent = 'Send';
+      sendBtn.classList.remove('stop');
       currentMsgEl = null;
+      if (pendingUserMsgEl) { pendingUserMsgEl.remove(); pendingUserMsgEl = null; }
+      resumeVADAfterPlayback();
       break;
   }
 }
 
-function playAudioChunk(base64Data) {
-  if (!audioCtx) { console.warn('No AudioContext'); return; }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+function stopPlayback() {
+  for (const src of activeSources) {
+    try { src.stop(); } catch(e) {}
+  }
+  activeSources = [];
+  nextPlayTime = 0;
+}
+
+function interruptConversation() {
+  if (!isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return;
+  wsSend(JSON.stringify({ type: 'interrupt' }));
+  stopPlayback();
+}
+
+async function playAudioChunkBinary(arrayBuffer) {
+  await audioReady;
+  if (!audioCtx) { dbg('audio', 'no audioCtx, dropping chunk'); return; }
+  if (audioCtx.state === 'suspended') {
+    try { await audioCtx.resume(); } catch(_) {}
+  }
   try {
-    const bytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-    // Ensure proper alignment for Int16Array
-    const aligned = new ArrayBuffer(bytes.length);
-    new Uint8Array(aligned).set(bytes);
-    const int16 = new Int16Array(aligned);
+    const int16 = new Int16Array(arrayBuffer);
     const float32 = new Float32Array(int16.length);
+    let peak = 0;
     for (let i = 0; i < int16.length; i++) {
-      float32[i] = int16[i] / 32768;
+      const v = int16[i] / 32768;
+      float32[i] = v;
+      const a = v < 0 ? -v : v;
+      if (a > peak) peak = a;
     }
     const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
     buffer.getChannelData(0).set(float32);
@@ -369,24 +777,47 @@ function playAudioChunk(base64Data) {
     source.buffer = buffer;
     source.connect(audioCtx.destination);
     const startAt = Math.max(nextPlayTime, audioCtx.currentTime + 0.02);
+    const lead = startAt - audioCtx.currentTime;
     source.start(startAt);
     nextPlayTime = startAt + buffer.duration;
-    console.log(`Playing chunk: ${float32.length} samples, scheduled at ${startAt.toFixed(3)}s`);
+    activeSources.push(source);
+    if (currentMsgEl) setAudioStatus(currentMsgEl, 'playing');
+    source.onended = () => {
+      activeSources = activeSources.filter(s => s !== source);
+    };
+    dbg('audio', `chunk #${binaryFrameCount}`, {
+      samples: float32.length,
+      dur_s: +buffer.duration.toFixed(3),
+      peak: +peak.toFixed(3),
+      lead_s: +lead.toFixed(3),
+      ctx: audioCtx.state,
+    });
   } catch (e) {
     console.error('Audio playback error:', e);
   }
 }
 
 function send() {
-  const text = inputEl.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (alreadySent) return;  // dedupe between mic paths
 
+  if (isStreaming && !inputEl.value.trim()) {
+    interruptConversation();
+    return;
+  }
+
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  if (isStreaming) {
+    stopPlayback();
+  }
+
+  alreadySent = true;
   addUserMsg(text);
   inputEl.value = '';
-  inputEl.disabled = true;
-  sendBtn.disabled = true;
 
-  ws.send(JSON.stringify({
+  wsSend(JSON.stringify({
     type: 'conversation',
     text: text,
     language: langEl.value,
@@ -402,14 +833,51 @@ function addUserMsg(text) {
   scrollToBottom();
 }
 
+function addPendingUserMsg() {
+  // Replace any prior pending bubble (only one in flight at a time)
+  if (pendingUserMsgEl) pendingUserMsgEl.remove();
+  const el = document.createElement('div');
+  el.className = 'msg user pending';
+  el.innerHTML = '<span>Transcribing</span><span class="spinner"><span></span><span></span><span></span></span>';
+  messagesEl.appendChild(el);
+  pendingUserMsgEl = el;
+  scrollToBottom();
+}
+
+function fillPendingUserMsg(text) {
+  if (!pendingUserMsgEl) {
+    addUserMsg(text);
+    return;
+  }
+  pendingUserMsgEl.classList.remove('pending');
+  pendingUserMsgEl.textContent = text;
+  pendingUserMsgEl = null;
+}
+
 function addAssistantMsg(text) {
   const el = document.createElement('div');
   el.className = 'msg assistant';
-  el.innerHTML = '<div class="text"></div><div class="meta"></div>';
-  el.querySelector('.text').textContent = text;
+  el.innerHTML = '<div class="text"></div>'
+    + '<div class="audio-status"><span class="spinner"><span></span><span></span><span></span></span><span class="label"></span></div>'
+    + '<div class="meta"></div>';
+  el.dataset.raw = text;
+  if (text) el.querySelector('.text').innerHTML = renderMarkdown(text);
   messagesEl.appendChild(el);
   scrollToBottom();
   return el;
+}
+
+function setAudioStatus(el, state) {
+  if (!el) return;
+  const status = el.querySelector('.audio-status');
+  const label = status.querySelector('.label');
+  const labels = { thinking: 'Thinking…', generating: 'Generating audio…', playing: '' };
+  if (state === null || state === 'done' || state === 'playing') {
+    status.classList.remove('show');
+  } else {
+    label.textContent = labels[state] || '';
+    status.classList.add('show');
+  }
 }
 
 function addSystemMsg(text) {
@@ -425,11 +893,238 @@ function scrollToBottom() {
 }
 
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') send();
+  if (e.key === 'Enter') {
+    alreadySent = false;  // typed input is independent of mic dedupe
+    send();
+  }
 });
-sendBtn.addEventListener('click', send);
+sendBtn.addEventListener('click', () => {
+  alreadySent = false;
+  send();
+});
+clearBtn.addEventListener('click', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    wsSend(JSON.stringify({ type: 'clear_history' }));
+    messagesEl.innerHTML = '<div class="msg system">Conversation cleared.</div>';
+  }
+});
+
+// --- VAD (Voice Activity Detection) ----------------------------------------
+let vadInstance = null;
+let vadActive = false;
+let vadPausedForPlayback = false;
+
+function pauseVADForPlayback() {
+  // While the bot is speaking, release the mic. vad-web hardcodes
+  // echoCancellation=true in its getUserMedia call, which causes the OS
+  // audio pipeline to suppress our own playback as "echo".
+  if (!vadActive || !vadInstance || vadPausedForPlayback) return;
+  try { vadInstance.pause(); } catch(_) {}
+  vadPausedForPlayback = true;
+  vadIndicator.querySelector('span:last-child').textContent = 'Bot speaking…';
+  dbg('vad', 'paused for playback');
+}
+
+function resumeVADAfterPlayback() {
+  if (!vadActive || !vadInstance || !vadPausedForPlayback) return;
+  try { vadInstance.start(); } catch(e) { dbg('vad', `resume failed: ${e.message}`); }
+  vadPausedForPlayback = false;
+  vadIndicator.querySelector('span:last-child').textContent = 'Listening…';
+  dbg('vad', 'resumed after playback');
+}
+
+function float32ToPcmBytes(float32Array) {
+  const int16 = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return int16.buffer;
+}
+
+async function startVAD() {
+  if (vadInstance) return;
+  try {
+    dbg('vad', 'init starting (vendor assets, same-origin)');
+    vadInstance = await vad.MicVAD.new({
+      baseAssetPath: '/static/vendor/vad/',
+      onnxWASMBasePath: '/static/vendor/ort/',
+      positiveSpeechThreshold: 0.5,
+      negativeSpeechThreshold: 0.25,
+      minSpeechFrames: 6,
+      preSpeechPadFrames: 6,
+      redemptionFrames: 12,
+      onSpeechStart: () => {
+        dbg('vad', 'speechStart');
+        vadIndicator.classList.add('speaking');
+        vadIndicator.querySelector('span:last-child').textContent = 'Speaking...';
+      },
+      onSpeechEnd: (audio) => {
+        dbg('vad', `speechEnd samples=${audio.length}`);
+        vadIndicator.classList.remove('speaking');
+        vadIndicator.querySelector('span:last-child').textContent = 'Listening...';
+
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        if (isStreaming) {
+          interruptConversation();
+        }
+
+        const pcmBuffer = float32ToPcmBytes(audio);
+        wsSend(pcmBuffer);
+        addPendingUserMsg();
+      },
+    });
+    vadInstance.start();
+    vadActive = true;
+    micBtn.style.display = 'none';
+    vadIndicator.classList.add('active');
+    dbg('vad', 'init ok');
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      wsSend(JSON.stringify({
+        type: 'set_language',
+        language: langEl.value,
+        voice: voiceEl.value || undefined,
+      }));
+    }
+  } catch (e) {
+    console.error('VAD init failed:', e);
+    dbg('vad', `init failed: ${e.message || e}`);
+    addSystemMsg('Hands-free mode unavailable: ' + (e.message || e));
+    vadToggle.checked = false;
+  }
+}
+
+function stopVAD() {
+  if (vadInstance) {
+    try { vadInstance.pause(); } catch(_) {}
+    try { vadInstance.destroy(); } catch(_) {}
+    vadInstance = null;
+  }
+  vadActive = false;
+  vadPausedForPlayback = false;
+  micBtn.style.display = '';
+  vadIndicator.classList.remove('active', 'speaking');
+  dbg('vad', 'stopped');
+}
+
+vadToggle.addEventListener('change', () => {
+  if (vadToggle.checked) {
+    startVAD();
+  } else {
+    stopVAD();
+  }
+});
+
+langEl.addEventListener('change', () => {
+  if (vadActive && ws && ws.readyState === WebSocket.OPEN) {
+    wsSend(JSON.stringify({
+      type: 'set_language',
+      language: langEl.value,
+      voice: voiceEl.value || undefined,
+    }));
+  }
+});
 
 connect();
+
+// --- Pre-create AudioContext at page load ---------------------------------
+// If we wait until the first response to create AudioContext, VAD's mic
+// (echoCancellation=true) may already be open, which causes Chrome on macOS
+// to bind the context's output to the silent "communications" device.
+// Creating it now (before any getUserMedia) binds it to the normal output.
+function ensureAudioContext() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new AudioContext({ sampleRate: 24000 });
+    sampleRate = 24000;
+    audioReady = audioCtx.state === 'suspended'
+      ? audioCtx.resume().catch(_ => {})
+      : Promise.resolve();
+    dbg('audio', `pre-created ctx sr=${audioCtx.sampleRate} state=${audioCtx.state}`);
+  } catch (e) {
+    dbg('err', `audioCtx pre-create failed: ${e.message}`);
+  }
+}
+ensureAudioContext();
+// Browsers won't actually start audio output until a user gesture. Resume on
+// the first interaction so the context is hot when the bot replies.
+const resumeOnGesture = () => {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(_ => {});
+  document.removeEventListener('pointerdown', resumeOnGesture);
+  document.removeEventListener('keydown', resumeOnGesture);
+};
+document.addEventListener('pointerdown', resumeOnGesture);
+document.addEventListener('keydown', resumeOnGesture);
+
+// --- Microphone permission (on page load) ----------------------------------
+function setMicStatus(state) {
+  micStatusEl.classList.remove('granted', 'denied', 'prompt');
+  if (state === 'granted') {
+    micStatusEl.textContent = 'Mic: granted';
+    micStatusEl.classList.add('granted');
+    vadToggle.disabled = false;
+    vadToggle.parentElement.title = '';
+  } else if (state === 'denied') {
+    micStatusEl.textContent = 'Mic: blocked';
+    micStatusEl.classList.add('denied');
+    vadToggle.disabled = true;
+    vadToggle.checked = false;
+    vadToggle.parentElement.title = 'Microphone is blocked. Allow it in your browser settings to use hands-free.';
+  } else {
+    micStatusEl.textContent = 'Mic: prompt';
+    micStatusEl.classList.add('prompt');
+  }
+  dbg('mic', `permission ${state}`);
+}
+
+async function requestMicPermission() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setMicStatus('denied');
+    return;
+  }
+
+  // Try the Permissions API first (Chrome, Edge, Firefox 79+)
+  let initialState = 'prompt';
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const perm = await navigator.permissions.query({ name: 'microphone' });
+      initialState = perm.state;
+      perm.onchange = () => setMicStatus(perm.state);
+    } catch (_) {
+      // Safari may throw; fall through to getUserMedia probe
+    }
+  }
+  setMicStatus(initialState);
+  if (initialState === 'granted' || initialState === 'denied') return;
+
+  // Try to trigger the prompt now. If the browser ignores us without a
+  // user gesture, fall back to the first click on the page.
+  const tryPrompt = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t => t.stop());
+      setMicStatus('granted');
+      return true;
+    } catch (e) {
+      if (e.name === 'NotAllowedError') {
+        setMicStatus('denied');
+      }
+      return false;
+    }
+  };
+
+  const ok = await tryPrompt();
+  if (!ok && micStatusEl.classList.contains('prompt')) {
+    const onGesture = async () => {
+      document.removeEventListener('pointerdown', onGesture);
+      await tryPrompt();
+    };
+    document.addEventListener('pointerdown', onGesture, { once: true });
+  }
+}
+
+requestMicPermission();
 </script>
 </body>
 </html>

@@ -78,6 +78,11 @@ SYSTEM_PROMPTS = {
 }
 
 SENTENCE_MIN_LENGTH = 10
+MAX_HISTORY_TURNS = 10
+
+# Whisper STT config
+WHISPER_MODEL_SIZE = "base"
+WHISPER_SAMPLE_RATE = 16000
 
 
 def get_reference_path(accent_id: str) -> Path:
